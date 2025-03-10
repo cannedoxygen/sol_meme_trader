@@ -1,0 +1,60 @@
+{
+  "apiKeys": {
+    "openai": "",
+    "telegramBot": "",
+    "rugCheck": "",
+    "birdeye": "",
+    "jupiter": ""
+  },
+  "socialSettings": {
+    "twitterBearerToken": "",
+    "discordWebhook": "",
+    "telegramChatId": "",
+    "telegramChannels": ["-100XXXXXXXX"]
+  },
+  "tradingSettings": {
+    "liquidityThreshold": 1000.0,
+    "maxSlippageBps": 50,
+    "minConfidenceScore": 7.0,
+    "maxRiskScore": 4.0,
+    "tradeSize": 0.1,
+    "maxDailyTrades": 10,
+    "emergencyStopLossPercent": 15.0,
+    "takeProfitPercent": 30.0,
+    "useAiForExit": true,
+    "holdingPeriodHours": 24,
+    "enableAutoTrading": false
+  },
+  "riskSettings": {
+    "maxPortfolioRisk": 5.0,
+    "maxPositionSize": 1.0,
+    "blacklistedCoins": [
+      "CoinAddress1",
+      "CoinAddress2"
+    ],
+    "blacklistedDevelopers": [
+      "DevAddress1",
+      "DevAddress2"
+    ],
+    "requireRugCheck": true,
+    "minLiquidityLocked": 5000.0,
+    "maxSupplyConcentration": 70.0,
+    "cooldownPeriodMinutes": 60,
+    "minHolders": 25,
+    "maxRiskScore": 70
+  },
+  "networkSettings": {
+    "rpcUrl": "https://api.mainnet-beta.solana.com",
+    "fallbackRpcUrls": [
+      "https://solana-api.projectserum.com",
+      "https://rpc.ankr.com/solana"
+    ],
+    "connectionTimeout": 10,
+    "maxRetries": 3,
+    "retryDelay": 2,
+    "priorityFee": 100
+  },
+  "loggingLevel": "INFO",
+  "environment": "production",
+  "lastUpdated": ""
+}
