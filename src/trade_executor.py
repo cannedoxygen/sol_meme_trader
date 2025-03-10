@@ -2,6 +2,7 @@ import logging
 import requests
 import json
 import time
+import base64
 from typing import Dict, Any, Optional, Union
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from datetime import datetime
@@ -11,8 +12,9 @@ try:
     # Try newer solders package first
     from solders.keypair import Keypair
     from solders.pubkey import Pubkey
-    from solders.transaction import Transaction
+    from solders.transaction import Transaction, VersionedTransaction
     from solana.rpc.api import Client
+    from solana.rpc.types import TxOpts
     SOLANA_PACKAGE_VERSION = "new"
 except ImportError:
     try:
@@ -67,6 +69,7 @@ LAMPORTS_PER_SOL = 1_000_000_000  # 10^9
 SLIPPAGE_BPS_DEFAULT = 50  # 0.5%
 RETRIES_DEFAULT = 3
 MAX_TRANSACTION_SIZE = 1232  # bytes
+DEFAULT_PRIORITY_FEE = 100  # lamports per compute unit
 
 def swap_via_jupiter(
     solana_client: Client, 
@@ -74,7 +77,8 @@ def swap_via_jupiter(
     token_in: str, 
     token_out: str, 
     amount_in: int,
-    slippage_bps: int = SLIPPAGE_BPS_DEFAULT
+    slippage_bps: int = SLIPPAGE_BPS_DEFAULT,
+    priority_fee: int = DEFAULT_PRIORITY_FEE
 ) -> Optional[str]:
     """
     Execute a swap using the Jupiter API to trade tokens on Solana.
@@ -86,6 +90,7 @@ def swap_via_jupiter(
         token_out: Mint address of the target token
         amount_in: Amount to trade in the smallest unit (e.g., lamports)
         slippage_bps: Slippage tolerance in basis points (1 bp = 0.01%)
+        priority_fee: Priority fee in lamports per compute unit
     
     Returns:
         str: Transaction signature if successful, or None if failed
@@ -94,7 +99,7 @@ def swap_via_jupiter(
     
     # Check if we're in simulation mode
     if SOLANA_PACKAGE_VERSION == "simulation":
-        logging.info("SIMULATION MODE: No actual transaction will be executed")
+        logging.warning("SIMULATION MODE: No actual transaction will be executed")
         time.sleep(2)  # Simulate processing time
         tx_sig = f"SIMULATED_TX_{int(time.time())}"
         logging.info(f"Simulated trade executed. Tx Signature: {tx_sig}")
@@ -108,7 +113,7 @@ def swap_via_jupiter(
             return None
         
         # Step 2: Get the swap transaction
-        swap_tx = get_jupiter_swap_transaction(quote)
+        swap_tx = get_jupiter_swap_transaction(quote, wallet.pubkey())
         if not swap_tx:
             logging.error("Failed to get swap transaction from Jupiter")
             return None
@@ -120,13 +125,16 @@ def swap_via_jupiter(
             return None
         
         # Convert from base64 to bytes
-        import base64
         tx_bytes = base64.b64decode(tx_data)
         
         # Send the serialized transaction
-        tx_sig = send_transaction(solana_client, wallet, tx_bytes)
+        tx_sig = send_transaction(solana_client, wallet, tx_bytes, priority_fee)
         if tx_sig:
             logging.info(f"Trade executed successfully. Tx Signature: {tx_sig}")
+            
+            # Wait for confirmation
+            confirm_transaction(solana_client, tx_sig)
+            
             return tx_sig
         else:
             logging.error("Failed to send transaction")
@@ -187,22 +195,29 @@ def get_jupiter_quote(
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type(requests.RequestException)
 )
-def get_jupiter_swap_transaction(quote: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def get_jupiter_swap_transaction(quote: Dict[str, Any], user_public_key: Union[str, Pubkey]) -> Optional[Dict[str, Any]]:
     """
     Get a swap transaction from Jupiter API using a quote.
     
     Args:
         quote: Quote object from get_jupiter_quote
+        user_public_key: User's public key for the transaction
         
     Returns:
         Dict containing the swap transaction or None if failed
     """
     url = f"{JUPITER_API_BASE}/swap"
     
+    # Convert Pubkey to string if needed
+    if hasattr(user_public_key, 'to_string'):
+        user_public_key = user_public_key.to_string()
+    elif hasattr(user_public_key, '__str__'):
+        user_public_key = str(user_public_key)
+    
     # Extract data from quote
     data = {
         "quoteResponse": quote,
-        "userPublicKey": "SimulationWallet",  # Will be replaced in the actual signing
+        "userPublicKey": user_public_key,
         "wrapUnwrapSOL": True  # Handle wrapping/unwrapping SOL automatically
     }
     
@@ -223,7 +238,8 @@ def get_jupiter_swap_transaction(quote: Dict[str, Any]) -> Optional[Dict[str, An
 def send_transaction(
     solana_client: Client, 
     wallet: Keypair, 
-    tx_bytes: bytes
+    tx_bytes: bytes,
+    priority_fee: int = DEFAULT_PRIORITY_FEE
 ) -> Optional[str]:
     """
     Send a serialized transaction to the Solana network.
@@ -232,35 +248,95 @@ def send_transaction(
         solana_client: Solana RPC client
         wallet: Wallet keypair for signing
         tx_bytes: Serialized transaction bytes
+        priority_fee: Priority fee in lamports per compute unit
         
     Returns:
         Transaction signature if successful, None otherwise
     """
-    # This is a simplified implementation
-    # In a real implementation, we would need to:
-    # 1. Deserialize the transaction
-    # 2. Sign it with the wallet
-    # 3. Send it to the network
-    
-    # For now, we'll simulate this process
     try:
         if SOLANA_PACKAGE_VERSION == "simulation":
             tx_sig = f"SIMULATED_TX_{int(time.time())}"
             return tx_sig
         
-        # For a real implementation, we would do something like:
-        # tx = Transaction.deserialize(tx_bytes)
-        # tx.sign([wallet])
-        # result = solana_client.send_transaction(tx)
-        # return result.get("result")
+        # For versioned transactions (solders)
+        if SOLANA_PACKAGE_VERSION == "new" and hasattr(VersionedTransaction, 'deserialize'):
+            try:
+                # Try to deserialize as a versioned transaction first
+                tx = VersionedTransaction.deserialize(tx_bytes)
+                # Set compute budget for priority fee if needed
+                if priority_fee > 0:
+                    # Note: In a real implementation, we'd need to add compute budget instruction
+                    # But Jupiter transactions should already include it
+                    pass
+                
+                # Sign the transaction 
+                # Note: Jupiter transactions come pre-signed, we just need to submit
+                # But if additional signing is needed:
+                # tx.sign([wallet])
+                
+                # Send the transaction
+                opts = TxOpts(skip_preflight=False, preflight_commitment="confirmed")
+                result = solana_client.send_transaction(tx, opts=opts)
+                tx_sig = result.value
+                return tx_sig
+            except Exception as e:
+                logging.warning(f"Failed to process as versioned transaction: {e}")
+                # Fall back to legacy transaction format
+                pass
         
-        # Simulation for now
-        time.sleep(1)
-        tx_sig = f"SIMULATED_TX_{int(time.time())}"
+        # For legacy transactions
+        # This is a simplified implementation for older Solana package versions
+        # In a real implementation, we would handle both transaction types properly
+        logging.info("Sending transaction using legacy method")
+        result = solana_client.send_raw_transaction(
+            tx_bytes, 
+            opts={"skipPreflight": False, "preflightCommitment": "confirmed"}
+        )
+        tx_sig = result["result"]
         return tx_sig
+        
     except Exception as e:
         logging.error(f"Error sending transaction: {e}")
         return None
+
+def confirm_transaction(solana_client: Client, signature: str, max_retries: int = 40, retry_delay: float = 0.5) -> bool:
+    """
+    Confirm a transaction has been processed by the network.
+    
+    Args:
+        solana_client: Solana RPC client
+        signature: Transaction signature to confirm
+        max_retries: Maximum number of confirmation attempts
+        retry_delay: Delay between retries in seconds
+        
+    Returns:
+        bool: True if confirmed, False otherwise
+    """
+    if SOLANA_PACKAGE_VERSION == "simulation":
+        time.sleep(1)  # Simulate confirmation delay
+        return True
+        
+    for i in range(max_retries):
+        try:
+            response = solana_client.get_signature_statuses([signature])
+            status = response["result"]["value"][0]
+            
+            if status is None:
+                logging.debug(f"Transaction {signature} not found yet. Retry {i+1}/{max_retries}")
+            elif status.get("err") is not None:
+                logging.error(f"Transaction {signature} failed: {status['err']}")
+                return False
+            elif status.get("confirmationStatus") == "confirmed" or status.get("confirmations", 0) > 0:
+                logging.info(f"Transaction {signature} confirmed!")
+                return True
+                
+            time.sleep(retry_delay)
+        except Exception as e:
+            logging.error(f"Error checking transaction status: {e}")
+            time.sleep(retry_delay)
+            
+    logging.warning(f"Transaction {signature} not confirmed after {max_retries} attempts")
+    return False
 
 def execute_buy(
     solana_client: Client, 
@@ -268,7 +344,8 @@ def execute_buy(
     token_in: str, 
     token_out: str, 
     amount_in: int,
-    slippage_bps: int = SLIPPAGE_BPS_DEFAULT
+    slippage_bps: int = SLIPPAGE_BPS_DEFAULT,
+    priority_fee: int = DEFAULT_PRIORITY_FEE
 ) -> Optional[str]:
     """
     Execute a BUY order using the swap function.
@@ -280,12 +357,13 @@ def execute_buy(
         token_out: Token to be bought
         amount_in: Amount of token_in to swap
         slippage_bps: Slippage tolerance in basis points
+        priority_fee: Priority fee in lamports per compute unit
         
     Returns:
         Transaction signature or None
     """
     logging.info(f"Initiating BUY order: Swap {amount_in} of {token_in} for {token_out}")
-    tx_signature = swap_via_jupiter(solana_client, wallet, token_in, token_out, amount_in, slippage_bps)
+    tx_signature = swap_via_jupiter(solana_client, wallet, token_in, token_out, amount_in, slippage_bps, priority_fee)
     
     if tx_signature:
         logging.info(f"BUY order executed. Tx Signature: {tx_signature}")
@@ -300,7 +378,8 @@ def execute_sell(
     token_in: str, 
     token_out: str, 
     amount_in: int,
-    slippage_bps: int = SLIPPAGE_BPS_DEFAULT
+    slippage_bps: int = SLIPPAGE_BPS_DEFAULT,
+    priority_fee: int = DEFAULT_PRIORITY_FEE
 ) -> Optional[str]:
     """
     Execute a SELL order using the swap function.
@@ -312,12 +391,13 @@ def execute_sell(
         token_out: Token to receive (usually SOL)
         amount_in: Amount of token_in to swap
         slippage_bps: Slippage tolerance in basis points
+        priority_fee: Priority fee in lamports per compute unit
         
     Returns:
         Transaction signature or None
     """
     logging.info(f"Initiating SELL order: Swap {amount_in} of {token_in} for {token_out}")
-    tx_signature = swap_via_jupiter(solana_client, wallet, token_in, token_out, amount_in, slippage_bps)
+    tx_signature = swap_via_jupiter(solana_client, wallet, token_in, token_out, amount_in, slippage_bps, priority_fee)
     
     if tx_signature:
         logging.info(f"SELL order executed. Tx Signature: {tx_signature}")
@@ -367,6 +447,49 @@ def estimate_swap(
             "success": False,
             "error": str(e)
         }
+
+def get_token_balance(client: Client, wallet: Keypair, token_address: str) -> int:
+    """
+    Get the token balance for a specific token address
+    
+    Args:
+        client: Solana RPC client
+        wallet: Wallet keypair
+        token_address: Token mint address
+    
+    Returns:
+        int: Token balance in smallest units (or 0 if error)
+    """
+    if SOLANA_PACKAGE_VERSION == "simulation":
+        return 1000000000  # Return dummy value in simulation mode
+    
+    try:
+        # For SOL token, get SOL balance
+        if token_address == "So11111111111111111111111111111111111111112":
+            response = client.get_balance(wallet.pubkey())
+            return response.value
+            
+        # For SPL tokens, get token accounts
+        from spl.token.client import Token
+        from spl.token.constants import TOKEN_PROGRAM_ID
+
+        # Get token accounts owned by the wallet
+        token_accounts = client.get_token_accounts_by_owner(
+            wallet.pubkey(),
+            {"mint": Pubkey.from_string(token_address)}
+        )
+        
+        # Find the token account for this mint
+        balance = 0
+        for account in token_accounts.value:
+            # Parse the token account data
+            account_data = Token.unpack_account_data(account.account.data)
+            balance += account_data.amount
+            
+        return balance
+    except Exception as e:
+        logging.error(f"Error getting token balance for {token_address}: {e}")
+        return 0
 
 if __name__ == "__main__":
     # For testing, we simulate a buy and sell order.

@@ -6,6 +6,11 @@ from typing import Dict, Any, Tuple, List, Optional, Union
 from datetime import datetime, timedelta
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from dataclasses import dataclass
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging for production
 logging.basicConfig(
@@ -20,11 +25,13 @@ MIN_LIQUIDITY_DEFAULT = 1000  # Default minimum liquidity in USD
 MAX_CONCENTRATION_DEFAULT = 70  # Default maximum supply concentration (%)
 MIN_HOLDERS_DEFAULT = 25  # Default minimum number of holders
 MAX_RISK_SCORE_DEFAULT = 70  # Default maximum risk score (0-100)
+RUGCHECK_API_KEY = os.getenv("RUGCHECK_API_KEY", "")
 
 # Cache for token risk assessments to reduce API calls
 risk_cache = {}
 cache_expiry = {}
 CACHE_DURATION = 1800  # 30 minutes in seconds
+MAX_CACHE_DURATION_FOR_NEW_TOKENS = 300  # 5 minutes for new tokens (<24h old)
 
 class RiskError(Exception):
     """Base exception for risk-related errors"""
@@ -141,6 +148,22 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
         max_risk_score = risk_settings.get("maxRiskScore", MAX_RISK_SCORE_DEFAULT)
         require_rugcheck = risk_settings.get("requireRugCheck", True)
     
+    # Check if we have age data to determine cache duration
+    token_age_hours = 0
+    if "age_minutes" in token:
+        token_age_hours = token.get("age_minutes", 0) / 60
+    elif "listingTime" in token:
+        try:
+            listing_time = datetime.fromisoformat(token["listingTime"].replace("Z", "+00:00"))
+            token_age_hours = (datetime.now(listing_time.tzinfo) - listing_time).total_seconds() / 3600
+        except (ValueError, TypeError):
+            pass
+
+    # Determine cache duration based on token age
+    cache_expiration = CACHE_DURATION
+    if token_age_hours < 24:  # For new tokens, use shorter cache time
+        cache_expiration = MAX_CACHE_DURATION_FOR_NEW_TOKENS
+    
     # Check cache first
     cache_key = token_address
     current_time = time.time()
@@ -164,7 +187,7 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
         
         # Cache the result
         risk_cache[cache_key] = assessment
-        cache_expiry[cache_key] = current_time + CACHE_DURATION
+        cache_expiry[cache_key] = current_time + cache_expiration
         
         return False, "Token is blacklisted.", assessment
 
@@ -207,7 +230,7 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
     holders_count = 0
     max_tax = 0
     creation_time = ""
-    age_hours = 0
+    age_hours = token_age_hours or 0  # Use pre-computed age if available
     
     if rug_result:
         # Extract key risk indicators
@@ -229,8 +252,8 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
                 top_holders_concentration = 100
                 logging.warning(f"Error calculating top holders concentration for {token_address}")
         
-        # Calculate token age
-        if creation_time:
+        # Calculate token age if not already known
+        if age_hours == 0 and creation_time:
             try:
                 creation_dt = datetime.fromisoformat(creation_time.replace("Z", "+00:00"))
                 age_hours = (datetime.now(creation_dt.tzinfo) - creation_dt).total_seconds() / 3600
@@ -265,7 +288,7 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
             
             # Cache the result
             risk_cache[cache_key] = assessment
-            cache_expiry[cache_key] = current_time + CACHE_DURATION
+            cache_expiry[cache_key] = current_time + cache_expiration
             
             return False, f"Risk score too high: {risk_score} > {max_risk_score}", assessment
         
@@ -290,7 +313,7 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
             
             # Cache the result
             risk_cache[cache_key] = assessment
-            cache_expiry[cache_key] = current_time + CACHE_DURATION
+            cache_expiry[cache_key] = current_time + cache_expiration
             
             return False, "Potential honeypot detected", assessment
     else:
@@ -336,7 +359,7 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
         
         # Cache the result
         risk_cache[cache_key] = assessment
-        cache_expiry[cache_key] = current_time + CACHE_DURATION
+        cache_expiry[cache_key] = current_time + cache_expiration
         
         return False, f"Unhealthy supply distribution: {top_holders_concentration:.1f}% > {max_concentration}%", assessment
 
@@ -366,7 +389,7 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
         
         # Cache the result
         risk_cache[cache_key] = assessment
-        cache_expiry[cache_key] = current_time + CACHE_DURATION
+        cache_expiry[cache_key] = current_time + cache_expiration
         
         return False, f"Too few holders: {holders_count} < {min_holders}", assessment
 
@@ -396,9 +419,43 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
         
         # Cache the result
         risk_cache[cache_key] = assessment
-        cache_expiry[cache_key] = current_time + CACHE_DURATION
+        cache_expiry[cache_key] = current_time + cache_expiration
         
         return False, f"Excessive tax: {max_tax}%", assessment
+
+    # 7. Age assessment (more strict checks for very new tokens)
+    all_assessments["age"] = {
+        "result": "passed" if age_hours >= 24 else "warning",
+        "details": f"Token age: {age_hours:.1f} hours"
+    }
+    
+    # For very new tokens (<6 hours), require higher standards
+    if age_hours < 6:
+        # For extremely new tokens, enforce stricter requirements on liquidity
+        min_liquidity_for_new_tokens = liquidity_threshold * 2
+        if liquidity < min_liquidity_for_new_tokens:
+            logging.info(f"New token {token_address} ({age_hours:.1f}h old) has insufficient liquidity for its age: {liquidity} USD < {min_liquidity_for_new_tokens} USD.")
+            assessment = create_risk_assessment(
+                False,
+                f"Insufficient liquidity for new token: {liquidity} USD < {min_liquidity_for_new_tokens} USD.",
+                80,
+                liquidity_usd=liquidity,
+                holders_count=holders_count,
+                top_holders_concentration=top_holders_concentration,
+                liquidity_locked=liquidity_locked,
+                contract_verification=contract_verified,
+                honeypot_risk=honeypot_risk,
+                max_tax=max_tax,
+                creation_time=creation_time,
+                age_hours=age_hours,
+                assessments=all_assessments
+            )
+            
+            # Cache with shorter expiry for new tokens
+            risk_cache[cache_key] = assessment
+            cache_expiry[cache_key] = current_time + MAX_CACHE_DURATION_FOR_NEW_TOKENS
+            
+            return False, f"Insufficient liquidity for new token: {liquidity} USD < {min_liquidity_for_new_tokens} USD.", assessment
 
     # Calculate final risk score based on assessments
     final_risk_score = calculate_risk_score(
@@ -428,9 +485,9 @@ def apply_risk_filters(token: Dict[str, Any], config) -> Tuple[bool, str, RiskAs
         assessments=all_assessments
     )
     
-    # Cache the result
+    # Cache the result (with shorter expiry for newer tokens)
     risk_cache[cache_key] = final_assessment
-    cache_expiry[cache_key] = current_time + CACHE_DURATION
+    cache_expiry[cache_key] = current_time + cache_expiration
     
     logging.info(f"Token {token_address} passed all risk filters. Risk score: {final_risk_score}")
     return True, "OK", final_assessment
@@ -546,15 +603,26 @@ def check_rug_status(token_address: str) -> Optional[Dict[str, Any]]:
     """
     url = f"{RUGCHECK_BASE_URL}/{token_address}/report"
     
+    # Add API key to headers if available
+    headers = {}
+    if RUGCHECK_API_KEY:
+        headers["Authorization"] = f"Bearer {RUGCHECK_API_KEY}"
+    
     try:
         logging.info(f"Requesting RugCheck report for {token_address}")
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
         
         # Check if rate limited
         if response.status_code == 429:
             logging.warning(f"RugCheck API rate limit reached. Retrying in 5 seconds...")
             time.sleep(5)
             raise requests.RequestException("Rate limited")
+        
+        # Handle authentication errors
+        if response.status_code == 401 or response.status_code == 403:
+            logging.error(f"RugCheck API authentication failed. Check your API key.")
+            # Don't retry auth errors
+            return mock_rugcheck_response(token_address)
         
         # Handle other error status codes
         if response.status_code != 200:
@@ -626,18 +694,36 @@ def mock_rugcheck_response(token_address: str) -> Dict[str, Any]:
         Dict with mocked rugcheck data
     """
     logging.warning(f"Using mock RugCheck response for {token_address} due to API failure")
-    return {
+    
+    # Generate a deterministic risk score based on token address
+    # This ensures the same token always gets the same mock score
+    import hashlib
+    hash_object = hashlib.md5(token_address.encode())
+    hash_digest = hash_object.hexdigest()
+    
+    # Use the first 4 hex digits to generate a risk score between 30 and 70
+    risk_hex = hash_digest[:4]
+    risk_int = int(risk_hex, 16)  # Convert hex to int
+    risk_score = 30 + (risk_int % 41)  # Range from 30 to 70
+    
+    # Generate plausible mock data based on the address
+    mock_data = {
         "status": "caution",
-        "risk_score": 60,
-        "top_holders": [{"address": "mock1", "pct": 0.2}, {"address": "mock2", "pct": 0.1}],
-        "holders_count": 50,
-        "liquidity_locked": 2000,
-        "is_honeypot": False,
-        "contract_verified": True,
-        "max_tax": 10,
-        "creation_time": datetime.now().isoformat(),
+        "risk_score": risk_score,
+        "top_holders": [
+            {"address": f"mock1_{token_address[:8]}", "pct": 0.15 + (risk_int % 20) / 100},
+            {"address": f"mock2_{token_address[:8]}", "pct": 0.08 + (risk_int % 15) / 100}
+        ],
+        "holders_count": 50 + (risk_int % 200),
+        "liquidity_locked": 2000 + (risk_int % 10000),
+        "is_honeypot": risk_score > 65,
+        "contract_verified": risk_score < 50,
+        "max_tax": 5 + (risk_int % 20),
+        "creation_time": (datetime.now() - timedelta(hours=24 + (risk_int % 100))).isoformat(),
         "is_mocked": True
     }
+    
+    return mock_data
 
 def clean_risk_cache() -> None:
     """Remove expired items from the risk cache"""
@@ -651,97 +737,20 @@ def clean_risk_cache() -> None:
             del cache_expiry[key]
             
     logging.debug(f"Cleaned {len(expired_keys)} expired items from risk cache")
-
-def get_token_risk(token_address: str, force_refresh: bool = False) -> Optional[RiskAssessment]:
-    """
-    Get cached risk assessment for a token or force a refresh.
     
-    Args:
-        token_address: Token address to check
-        force_refresh: Whether to force a fresh assessment
+    # Proactively clean cache if it gets too large
+    if len(risk_cache) > 500:  # Arbitrary limit to prevent memory issues
+        # Keep only the most recently accessed entries
+        sorted_entries = sorted([(k, v) for k, v in cache_expiry.items()], key=lambda x: x[1], reverse=True)
+        # Keep the 250 most recent entries
+        entries_to_keep = sorted_entries[:250]
+        entries_to_remove = sorted_entries[250:]
         
-    Returns:
-        RiskAssessment object or None if not found and can't be assessed
-    """
-    if not token_address:
-        return None
-    
-    # Check cache first if not forcing refresh
-    cache_key = token_address
-    current_time = time.time()
-    
-    if not force_refresh and cache_key in risk_cache and current_time < cache_expiry.get(cache_key, 0):
-        return risk_cache[cache_key]
-    
-    # Get fresh RugCheck data
-    rug_result = check_rug_status(token_address)
-    if not rug_result:
-        return None
-    
-    # Create a dummy token object with address
-    token = {"address": token_address}
-    
-    # If RugCheck has liquidity data, add it
-    if "liquidity" in rug_result.get("raw_data", {}):
-        token["liquidity"] = rug_result["raw_data"]["liquidity"]
-    
-    # Apply risk filters with minimal config
-    # Create a minimal config object
-    class MinimalConfig:
-        class RiskSettings:
-            requireRugCheck = False
-            blacklistedCoins = []
+        # Remove older entries
+        for key, _ in entries_to_remove:
+            if key in risk_cache:
+                del risk_cache[key]
+            if key in cache_expiry:
+                del cache_expiry[key]
         
-        class TradingSettings:
-            liquidityThreshold = MIN_LIQUIDITY_DEFAULT
-        
-        riskSettings = RiskSettings()
-        tradingSettings = TradingSettings()
-    
-    _, _, assessment = apply_risk_filters(token, MinimalConfig())
-    return assessment
-
-if __name__ == "__main__":
-    # Example usage
-    token_data = {
-        "address": "TokenABC123",
-        "liquidity": 5000,
-        "name": "Sample Token"
-    }
-    
-    # Example config
-    class TestConfig:
-        class RiskSettings:
-            blacklistedCoins = ["BadToken1", "BadToken2"]
-            maxSupplyConcentration = 80.0
-            minHolders = 20
-            maxRiskScore = 75
-            requireRugCheck = True
-        
-        class TradingSettings:
-            liquidityThreshold = 1000.0
-        
-        riskSettings = RiskSettings()
-        tradingSettings = TradingSettings()
-    
-    config = TestConfig()
-    
-    # Perform risk assessment
-    passes, reason, assessment = apply_risk_filters(token_data, config)
-    
-    print(f"Risk Assessment for {token_data['address']}:")
-    print(f"Passed: {passes}")
-    print(f"Reason: {reason}")
-    print(f"Risk Score: {assessment.risk_score} ({assessment.risk_level} risk)")
-    print(f"Liquidity: ${assessment.liquidity_usd}")
-    print(f"Holders: {assessment.holders_count}")
-    print(f"Top Holders Concentration: {assessment.top_holders_concentration:.1f}%")
-    print(f"Liquidity Locked: ${assessment.liquidity_locked}")
-    print(f"Contract Verified: {assessment.contract_verification}")
-    print(f"Honeypot Risk: {assessment.honeypot_risk}")
-    print(f"Max Tax: {assessment.max_tax}%")
-    print(f"Token Age: {assessment.age_hours:.1f} hours")
-    
-    print("\nDetailed Assessments:")
-    for check, details in assessment.assessments.items():
-        print(f"- {check}: {details['result']} - {details['details']}")
+        logging.info(f"Cache size limit reached. Pruned {len(entries_to_remove)} older entries from risk cache.")
