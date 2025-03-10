@@ -1,0 +1,304 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+/* Import VCR OSD Mono font for the retro look */
+@font-face {
+  font-family: 'VCR OSD Mono';
+  src: url('/fonts/VCR_OSD_MONO.woff2') format('woff2'),
+       url('/fonts/VCR_OSD_MONO.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Import Tailwind CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global styles */
+@layer base {
+  body {
+    @apply bg-black text-white font-mono;
+    background-image: radial-gradient(circle at center, rgba(45, 10, 74, 0.2) 0%, rgba(0, 0, 0, 0.2) 100%);
+    overflow-x: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-black;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-purple-800;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-purple-600;
+  }
+
+  ::selection {
+    @apply bg-pink-600/50 text-white;
+  }
+}
+
+/* Utility classes for the retro lofi theme */
+@layer components {
+  .font-vcr {
+    font-family: 'VCR OSD Mono', monospace;
+  }
+  
+  /* Glitch animation */
+  .animate-glitch {
+    animation: glitch 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both infinite;
+    text-shadow: 0 0 8px rgba(0, 255, 255, 0.6), 0 0 12px rgba(255, 0, 255, 0.6);
+  }
+  
+  /* Glitch overlay animation */
+  .animate-glitch-overlay {
+    animation: glitch-overlay 1s ease-in-out infinite;
+  }
+  
+  /* Glitch text animation */
+  .animate-glitch-text {
+    animation: glitch-text 1s ease-in-out infinite;
+  }
+  
+  /* Scanline animation */
+  .animate-scanline {
+    animation: scanline 8s linear infinite;
+    background-image: linear-gradient(transparent 50%, rgba(0, 0, 0, 0.25) 50%);
+    background-size: 100% 4px;
+  }
+  
+  /* Terminal text animation */
+  .terminal-text {
+    overflow: hidden;
+    border-right: 0.15em solid green;
+    white-space: nowrap;
+    letter-spacing: 0.05em;
+    animation: typing 3.5s steps(40, end), blink-caret 0.75s step-end infinite;
+  }
+  
+  /* Loading bar animation */
+  .animate-load-progress {
+    width: 100%;
+    animation: load-progress 2.5s linear infinite;
+    background-size: 200% 100%;
+  }
+  
+  /* Grid background */
+  .bg-grid-pattern {
+    background-image: linear-gradient(rgba(128, 90, 213, 0.2) 1px, transparent 1px), 
+                      linear-gradient(90deg, rgba(128, 90, 213, 0.2) 1px, transparent 1px);
+    background-size: 40px 40px;
+    background-position: center center;
+  }
+  
+  /* Marquee animation */
+  .animate-scrolling {
+    animation: scrolling 20s linear infinite;
+  }
+  
+  /* CRT overlay effect */
+  .crt-overlay {
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+    background-size: 100% 2px, 3px 100%;
+    pointer-events: none;
+  }
+  
+  /* Glowing text effect */
+  .text-glow-cyan {
+    text-shadow: 0 0 5px rgba(6, 182, 212, 0.7), 0 0 10px rgba(6, 182, 212, 0.5);
+  }
+  
+  .text-glow-pink {
+    text-shadow: 0 0 5px rgba(219, 39, 119, 0.7), 0 0 10px rgba(219, 39, 119, 0.5);
+  }
+  
+  .text-glow-purple {
+    text-shadow: 0 0 5px rgba(147, 51, 234, 0.7), 0 0 10px rgba(147, 51, 234, 0.5);
+  }
+  
+  /* Button hover style */
+  .btn-hover-glow {
+    @apply transition-all duration-300;
+  }
+  
+  .btn-hover-glow:hover {
+    @apply shadow-lg;
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.7), 0 0 20px rgba(139, 92, 246, 0.4);
+  }
+}
+
+/* Starfield animations */
+.stars-sm {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  background: white;
+  box-shadow: 50px 30px 1px white, 100px 80px 1px white, 150px 50px 1px white, 
+              200px 100px 1px white, 250px 50px 1px white, 300px 200px 1px white,
+              350px 250px 1px white, 400px 300px 1px white, 450px 150px 1px white,
+              500px 100px 1px white, 550px 200px 1px white, 600px 250px 1px white,
+              650px 300px 1px white, 700px 200px 1px white, 750px 250px 1px white,
+              800px 100px 1px white, 850px 150px 1px white, 900px 200px 1px white;
+  animation: star-animation-sm 3s ease-in-out infinite;
+}
+
+.stars-md {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: white;
+  box-shadow: 75px 100px 1px white, 125px 300px 1px white, 175px 150px 1px white, 
+              225px 200px 1px white, 275px 350px 1px white, 325px 275px 1px white,
+              375px 400px 1px white, 425px 100px 1px white, 475px 350px 1px white,
+              525px 300px 1px white, 575px 150px 1px white, 625px 200px 1px white,
+              675px 350px 1px white, 725px 400px 1px white, 775px 300px 1px white,
+              825px 200px 1px white, 875px 100px 1px white, 925px 350px 1px white;
+  animation: star-animation-md 5s ease-in-out infinite;
+}
+
+.stars-lg {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: white;
+  box-shadow: 125px 150px 1.5px white, 175px 350px 1.5px white, 225px 200px 1.5px white, 
+              275px 250px 1.5px white, 325px 400px 1.5px white, 375px 300px 1.5px white,
+              425px 450px 1.5px white, 475px 150px 1.5px white, 525px 400px 1.5px white,
+              575px 250px 1.5px white, 625px 200px 1.5px white, 675px 350px 1.5px white,
+              725px 250px 1.5px white, 775px 300px 1.5px white, 825px 400px 1.5px white,
+              875px 450px 1.5px white, 925px 250px 1.5px white, 975px 350px 1.5px white;
+  animation: star-animation-lg 7s ease-in-out infinite;
+}
+
+/* Terminal text styles */
+.terminal-history {
+  max-height: 150px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 92, 246, 0.5) rgba(0, 0, 0, 0.2);
+}
+
+.terminal-history::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-history::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.terminal-history::-webkit-scrollbar-thumb {
+  background-color: rgba(139, 92, 246, 0.5);
+  border-radius: 3px;
+}
+
+/* Glitch text */
+.glitch-text {
+  position: relative;
+  animation: terminal-blink 1s step-end infinite;
+}
+
+/* Define animations */
+@keyframes glitch {
+  0% { transform: translate(0); }
+  20% { transform: translate(-5px, 5px); }
+  40% { transform: translate(-5px, -5px); }
+  60% { transform: translate(5px, 5px); }
+  80% { transform: translate(5px, -5px); }
+  100% { transform: translate(0); }
+}
+
+@keyframes glitch-overlay {
+  0%, 100% { opacity: 0; }
+  20%, 80% { opacity: 0.03; }
+  50% { opacity: 0.10; }
+}
+
+@keyframes glitch-text {
+  0% { transform: translate(0); }
+  20% { transform: translate(-2px, 1px); }
+  40% { transform: translate(-1px, -1px); filter: hue-rotate(90deg); }
+  60% { transform: translate(1px, 1px); }
+  80% { transform: translate(1px, -1px); filter: hue-rotate(-90deg); }
+  100% { transform: translate(0); }
+}
+
+@keyframes scanline {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 100%; }
+}
+
+@keyframes typing {
+  from { width: 0 }
+  to { width: 100% }
+}
+
+@keyframes blink-caret {
+  from, to { border-color: transparent }
+  50% { border-color: rgba(16, 185, 129, 0.75) }
+}
+
+@keyframes load-progress {
+  0% { background-position: 0% 0; }
+  50% { background-position: 100% 0; }
+  100% { background-position: 0% 0; }
+}
+
+@keyframes star-animation-sm {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-1px); }
+  100% { transform: translateY(0px); }
+}
+
+@keyframes star-animation-md {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-2px); }
+  100% { transform: translateY(0px); }
+}
+
+@keyframes star-animation-lg {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-3px); }
+  100% { transform: translateY(0px); }
+}
+
+@keyframes scrolling {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+@keyframes terminal-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  html {
+    color-scheme: dark;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .crt-overlay {
+    opacity: 0.07;
+  }
+  
+  .animate-scanline {
+    opacity: 0.15;
+  }
+}
